@@ -851,6 +851,7 @@ def _get_mac_keyring_password(browser_keyring_name, logger):
              '-a', browser_keyring_name,  # match 'account'
              '-s', f'{browser_keyring_name} Safe Storage'],  # match 'service'
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        print('stdout', repr(stdout))
         return stdout.rstrip(b'\n')
     except Exception as e:
         logger.warning(f'exception running find-generic-password: {error_to_str(e)}')
