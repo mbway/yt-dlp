@@ -48,7 +48,8 @@ from .utils._utils import _YDLLogger
 from .utils.networking import normalize_url
 
 CHROMIUM_BASED_BROWSERS = {'brave', 'chrome', 'chromium', 'edge', 'opera', 'vivaldi', 'whale'}
-SUPPORTED_BROWSERS = CHROMIUM_BASED_BROWSERS | {'firefox', 'safari'}
+FIREFOX_BASED_BROWSERS = {'firefox', 'librewolf', 'floorp'}
+SUPPORTED_BROWSERS = CHROMIUM_BASED_BROWSERS | FIREFOX_BASED_BROWSERS | {'safari'}
 
 
 class YDLLogger(_YDLLogger):
@@ -115,8 +116,8 @@ def load_cookies(cookie_file, browser_specification, ydl):
 
 
 def extract_cookies_from_browser(browser_name, profile=None, logger=YDLLogger(), *, keyring=None, container=None):
-    if browser_name == 'firefox':
-        return _extract_firefox_cookies(profile, container, logger)
+    if browser_name in FIREFOX_BASED_BROWSERS:
+        return _extract_firefox_cookies(browser_name, profile, container, logger)
     elif browser_name == 'safari':
         return _extract_safari_cookies(profile, logger)
     elif browser_name in CHROMIUM_BASED_BROWSERS:
@@ -125,19 +126,20 @@ def extract_cookies_from_browser(browser_name, profile=None, logger=YDLLogger(),
         raise ValueError(f'unknown browser: {browser_name}')
 
 
-def _extract_firefox_cookies(profile, container, logger):
-    logger.info('Extracting cookies from firefox')
+def _extract_firefox_cookies(browser_name, profile, container, logger):
+    logger.info(f'Extracting cookies from {browser_name}')
     if not sqlite3:
         logger.warning('Cannot extract cookies from firefox without sqlite3 support. '
                        'Please use a Python interpreter compiled with sqlite3 support')
         return YoutubeDLCookieJar()
 
+    config = _firefox_based_browser_settings(browser_name)
     if profile is None:
-        search_roots = list(_firefox_browser_dirs())
+        search_roots = config.browser_dirs
     elif _is_path(profile):
         search_roots = [profile]
     else:
-        search_roots = [os.path.join(path, profile) for path in _firefox_browser_dirs()]
+        search_roots = [os.path.join(path, profile) for path in config.browser_dirs]
     search_root = ', '.join(map(repr, search_roots))
 
     cookie_database_path = _newest(_firefox_cookie_dbs(search_roots))
@@ -193,24 +195,54 @@ def _extract_firefox_cookies(profile, container, logger):
             if cursor is not None:
                 cursor.connection.close()
 
+@dataclass
+class _FirefoxBrowserSettings:
+    browser_dirs: list[str]
 
-def _firefox_browser_dirs():
+def _firefox_based_browser_settings(browser_name):
     if sys.platform in ('cygwin', 'win32'):
-        yield from map(os.path.expandvars, (
-            R'%APPDATA%\Mozilla\Firefox\Profiles',
-            R'%LOCALAPPDATA%\Packages\Mozilla.Firefox_n80bbvh6b1yt2\LocalCache\Roaming\Mozilla\Firefox\Profiles',
-        ))
+        appdata = os.path.expandvars(R'%APPDATA%')
+        appdata_local = os.path.expandvars(R'%LOCALAPPDATA%')
+# TODO(matt): support install from https://github.com/yt-dlp/yt-dlp/pull/11731#issuecomment-2525052396
+        browser_dirs = {
+            'firefox': [
+                    os.path.join(appdata, R'Mozilla\Firefox\Profiles'),
+                    # from microsoft store
+                    os.path.join(appdata_local, R'Packages\Mozilla.Firefox_n80bbvh6b1yt2\LocalCache\Roaming\Mozilla\Firefox\Profiles'),
+                ],
+            'librewolf': [],
+            'floorp': [],
+        }[browser_name]
 
     elif sys.platform == 'darwin':
-        yield os.path.expanduser('~/Library/Application Support/Firefox/Profiles')
+        browser_dirs = {
+            'firefox': [os.path.expanduser('~/Library/Application Support/Firefox/Profiles')],
+        }[browser_name]
 
     else:
-        yield from map(os.path.expanduser, (
-            '~/.mozilla/firefox',
-            '~/snap/firefox/common/.mozilla/firefox',
-            '~/.var/app/org.mozilla.firefox/.mozilla/firefox',
-        ))
+        flatpak_root = os.path.expanduser('~/.var/app')
+        snap_root = os.path.expanduser('~/snap')
+        browser_dirs = {
+            'firefox': [
+                os.path.expanduser('~/.mozilla/firefox'),
+                os.path.join(flatpak_root, 'org.mozilla.firefox/.mozilla/firefox'),
+                os.path.join(snap_root, 'firefox/common/.mozilla/firefox'),
+            ],
+            'librewolf': [
+                os.path.expanduser('~/.librewolf'),
+                os.path.join(flatpak_root, 'io.gitlab.librewolf-community/.librewolf'),
+                # not published on snapcraft
+            ],
+            'floorp': [
+                os.path.expanduser('~/.floorp'),
+                os.path.join(flatpak_root, 'one.ablaze.floorp/.floorp'),
+                # not published on snapcraft
+            ],
+        }[browser_name]
 
+    return _FirefoxBrowserSettings(
+        browser_dirs=browser_dirs,
+    )
 
 def _firefox_cookie_dbs(roots):
     for root in map(os.path.abspath, roots):
